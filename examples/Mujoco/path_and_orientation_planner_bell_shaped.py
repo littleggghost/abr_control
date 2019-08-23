@@ -36,14 +36,14 @@ ctrlr = OSC(
 # create our interface
 interface = Mujoco(robot_config, dt=.001)
 interface.connect()
+interface.send_target_angles(robot_config.START_ANGLES)
 
 feedback = interface.get_feedback()
 hand_xyz = robot_config.Tx('EE', feedback['q'])
 
-def get_approach(
-        robot_config, feedback, target_loc, approach_buffer=0.03, z_offset=0):
+def _get_approach(target_loc, approach_buffer=0.03, z_offset=0):
     """
-    Takes the robot feedback and target location, and returns an
+    Takes the target location, and returns an
     orientation to approach the target, along with a target position that
     is approach_buffer meters short of the target, with a z offset
     determined by z_offset in meters. The orientation is set to be a vector
@@ -52,7 +52,6 @@ def get_approach(
 
     Parameters
     ----------
-    feedback: dict of q and dq [rad and rad/sec]
     target_loc: list of 3 floats
         xyz cartesian loc of target of interest [meters]
     approach_buffer: float, Optional (Default: 0.03)
@@ -66,79 +65,83 @@ def get_approach(
     """
     target_z = np.copy(target_loc[2])
     target_loc = np.copy(target_loc)
+
     # get signs of target directions so our approach target is between the
     # arm and final target
     target_sign = target_loc / abs(target_loc)
-
-    # get the vector along which our gripper is pointing
-    ee_vector_origin = robot_config.Tx('link6', feedback['q'])
-    ee_vector_origin /= np.linalg.norm(ee_vector_origin)
-    ee_vector_offset = robot_config.Tx('EE', feedback['q'])
-
-    interface.set_mocap_xyz('box', ee_vector_offset)
-
-    ee_vector_offset /= np.linalg.norm(ee_vector_offset)
-    ee_vector = ee_vector_offset - ee_vector_origin
-    ee_vector /= np.linalg.norm(ee_vector)
-
-    interface.set_mocap_orientation('box',
-        transformations.quaternion_from_euler(ee_vector[0], ee_vector[1], ee_vector[2], 'rxyz'))
-
-    # get our approach vector relative to the base
-    base_loc = robot_config.Tx('joint0', feedback['q'], object_type='joint')
-    # get distance to target
-    dist_to_target = np.linalg.norm(target_loc - base_loc)
-    #base_loc /= np.linalg.norm(base_loc)
-    #target_loc /= np.linalg.norm(target_loc)
-    approach_vector = target_loc - base_loc
-    # normalize our approach vector
+    dist_to_target = np.linalg.norm(target_loc)
+    approach_vector = target_loc
     approach_vector /= np.linalg.norm(approach_vector)
+
+    # normalize our approach vector
     approach_pos = approach_vector * (dist_to_target - approach_buffer)
-    # since we zero out our z position to get an approach vector parallel
-    # with the ground, add the target z pos back to the approach position,
-    # plus the z offset defined by the user
-    approach_pos[2] = target_z + z_offset
-    approach_pos = abs(approach_pos) * target_sign
+    approach_vector[2] = 0
 
-    sign = 1
-    theta = sign * (np.arccos(np.dot(ee_vector, approach_vector) /
-             (np.linalg.norm(ee_vector) * np.linalg.norm(approach_vector))))
-    approach_quat = [np.cos(theta/2),
-                   ee_vector[0] * np.sin(theta/2),
-                   ee_vector[1] * np.sin(theta/2),
-                   ee_vector[2] * np.sin(theta/2)]
+    # world z pointing up, rotate by pi/2 to be parallel with ground
+    theta1 = np.pi/2
+    q1 = [np.cos(theta1/2),
+          0,
+          np.sin(theta1/2),
+          0
+          ]
+    # now we rotate about z to get x pointing up
+    theta2 = np.arctan2(target_loc[1], target_loc[0])
+    q2 = [np.cos(theta2/2),
+         0,
+         0,
+         np.sin(theta2/2),
+         ]
 
-    return approach_pos, approach_quat
+    # get our combined rotation
+    q3 = transformations.quaternion_multiply(q2, q1)
 
-def get_target(robot_config, feedback):
-    # pregenerate our path and orientation planners
-    n_timesteps = 2000
-    traj_planner = path_planners.BellShaped(
-        error_scale=0.01, n_timesteps=n_timesteps)
+    return approach_pos, q3
 
-    #target_position = [0.4, -0.3, 0.5]
-    mag = 0.6
-    # do you want bad things to happen? because reaching through the floor is how bad things happen
-    target_position = (np.random.random(3) - 0.5)
-    if target_position[2] < 0.4:
-        target_position[2] = 0.4
-    target_position = target_position / np.linalg.norm(target_position) * mag
 
+def get_approach_path(
+        robot_config, q, path_planner, max_reach_dist=1, target_position=None,
+        **kwargs):
+    """
+    Parameters
+    ----------
+    feedback: dict of q and dq [rad and rad/sec]
+    """
+    if target_position is None:
+        target_position = (np.random.random(3) - 0.5)*2 -0.2
+        # do you want bad things to happen? because reaching through the floor is
+        # how bad things happen
+        if target_position[2] < 0.4:
+            target_position[2] = 0.4
+
+    # normalize to make sure our target is within reaching distance
+    target_position = target_position / np.linalg.norm(target_position) * max_reach_dist
+
+    # get our EE starting orientation and position
     starting_orientation = robot_config.quaternion('EE', feedback['q'])
-    approach_pos, approach_orient = get_approach(
-        robot_config=robot_config, feedback=feedback, target_loc=target_position)
+    starting_pos = robot_config.Tx('EE', q)
 
-    # target_orientation = np.random.random(3)
-    # target_orientation /= np.linalg.norm(target_orientation)
-    # # convert our orientation to a quaternion
-    # target_orientation = [0] + list(target_orientation)
+    # get our target approach position and orientation
+    approach_pos, approach_orient = _get_approach(target_loc=target_position, **kwargs)
 
+    # generate our path to our approach position
     traj_planner.generate_path(
-        position=hand_xyz, target_pos=approach_pos)
+        position=starting_pos, target_pos=approach_pos)
+
+    # generate our orientation planner
     _, orientation_planner = traj_planner.generate_orientation_path(
-        orientation=starting_orientation, target_orientation=approach_orient)
+        orientation=starting_orientation,
+        target_orientation=approach_orient)
 
     return traj_planner, orientation_planner, target_position, approach_orient
+
+def instantiate_path_planner(n_timesteps=2000, error_scale=0.01, **kwargs):
+    """
+    Define your path planner of choice here
+    """
+    # pregenerate our path and orientation planners
+    traj_planner = path_planners.BellShaped(
+        error_scale=error_scale, n_timesteps=n_timesteps)
+    return traj_planner
 
 # set up lists for tracking data
 ee_track = []
@@ -155,22 +158,32 @@ try:
         if interface.viewer.exit:
             glfw.destroy_window(interface.viewer.window)
             break
+
         # get arm feedback
         feedback = interface.get_feedback()
         hand_xyz = robot_config.Tx('EE', feedback['q'])
+
+        # get a new target and path planner
         if count % 3000 == 0:
-            traj_planner, orientation_planner, target_position, target_orientation = get_target(robot_config, feedback)
+            traj_planner = instantiate_path_planner()
+            (traj_planner, orientation_planner, target_position,
+                target_orientation) = get_approach_path(
+                    robot_config, feedback['q'], traj_planner, max_reach_dist=0.9)
+            # set our final target pos and orient object
             interface.set_mocap_xyz('target_orientation', target_position)
             interface.set_mocap_orientation('target_orientation', target_orientation)
-            # print('Getting new target')
-            # time.sleep(3)
 
 
+        # get our next path step
         pos, vel = traj_planner.next()
         orient = orientation_planner.next()
         target = np.hstack([pos, orient])
 
+        # set our filtered target object
         interface.set_mocap_xyz('path_planner_orientation', target[:3])
+
+        # convert to quaternion, if using VREP instead of Mujoco you leave it
+        # in euler angles (rxyz)
         interface.set_mocap_orientation('path_planner_orientation',
             transformations.quaternion_from_euler(
                 orient[0], orient[1], orient[2], 'rxyz'))
@@ -179,7 +192,6 @@ try:
             q=feedback['q'],
             dq=feedback['dq'],
             target=target,
-            #target_vel=np.hstack([vel, np.zeros(3)])
             )
 
         # apply the control signal, step the sim forward

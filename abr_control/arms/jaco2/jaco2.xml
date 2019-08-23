@@ -208,6 +208,22 @@
         <exclude body1="path_planner_orientation" body2="link2"/>
         <exclude body1="path_planner_orientation" body2="link1"/>
         <exclude body1="path_planner_orientation" body2="base_link"/>
+
+        <exclude body1="box" body2="EE"/>
+        <exclude body1="box" body2="thumb_distal"/>
+        <exclude body1="box" body2="thumb_proximal"/>
+        <exclude body1="box" body2="index_distal"/>
+        <exclude body1="box" body2="index_proximal"/>
+        <exclude body1="box" body2="middle_distal"/>
+        <exclude body1="box" body2="middle_proximal"/>
+        <exclude body1="box" body2="link6"/>
+        <exclude body1="box" body2="link5"/>
+        <exclude body1="box" body2="link4"/>
+        <exclude body1="box" body2="link3"/>
+        <exclude body1="box" body2="link2"/>
+        <exclude body1="box" body2="link1"/>
+        <exclude body1="box" body2="base_link"/>
+
     </contact>
 
     <worldbody>
@@ -236,6 +252,10 @@
         </body>
 
         <body name="box" pos="0 0 -0.5" mocap="true">
+            <geom type="box" size=".02 .04 .06" rgba="1 1 0 .5" contype="2"/>
+        </body>
+
+        <body name="box2" pos="0 0 -0.5" mocap="true">
             <geom type="box" size=".02 .04 .06" rgba="1 1 0 .5" contype="2"/>
         </body>
 
