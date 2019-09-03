@@ -37,7 +37,9 @@ ctrlr = OSC(
 # create our interface
 interface = Mujoco(robot_config, dt=.001)
 interface.connect()
-interface.send_target_angles(robot_config.START_ANGLES)
+START_ANGLES = robot_config.START_ANGLES
+START_ANGLES[4] += 0.6
+interface.send_target_angles(START_ANGLES)
 
 feedback = interface.get_feedback()
 hand_xyz = robot_config.Tx('EE', feedback['q'])
@@ -171,8 +173,7 @@ def instantiate_path_planner(n_timesteps=2000, error_scale=0.01, **kwargs):
 
 # def instantiate_path_planner(n_timesteps=2000, error_scale=0, **kwargs):
 #     # pregenerate our path and orientation planners
-#     traj_planner = path_planners.FirstOrderArc(
-#         error_scale=error_scale, n_timesteps=n_timesteps)
+#     traj_planner = path_planners.FirstOrderArc(n_timesteps=n_timesteps)
 #     return traj_planner
 
 # set up lists for tracking data
@@ -221,6 +222,9 @@ try:
         orient = orientation_planner.next()
         target = np.hstack([pos, orient])
 
+        print('pos: ', pos)
+        print('orient: ', orient)
+        print('target: ', target)
         # set our filtered target object
         interface.set_mocap_xyz('path_planner_orientation', target[:3])
 
