@@ -37,6 +37,7 @@ install_requires = [
     "cloudpickle>=0.8.0",
     "sympy>=1.3",
     "nengo>=2.8.0",
+    "nengo_extras",
     "matplotlib>=3.0.0"]
 tests_require = [
     "pytest>=4.3.0",
