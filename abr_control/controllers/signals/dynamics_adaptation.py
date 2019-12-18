@@ -1,7 +1,7 @@
 import numpy as np
 
 import nengo
-import nengo_extras.triangular_intercepts
+from nengo_extras import dists
 
 from abr_control._vendor.nengolib.stats import ScatteredHypersphere, spherical_transform
 
@@ -85,7 +85,7 @@ class DynamicsAdaptation():
         self.pes_learning_rate = pes_learning_rate
 
         if intercepts is None:
-            intercepts = nengo_extras.triangular_intercepts.generate(
+            intercepts = dists.generate_triangular(
                 n_input=n_input,
                 n_ensembles=self.n_ensembles,
                 n_neurons=self.n_neurons,

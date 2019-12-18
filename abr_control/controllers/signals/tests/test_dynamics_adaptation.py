@@ -6,7 +6,7 @@ from abr_control.arms import ur5
 from abr_control.controllers import signals
 from abr_control.controllers.signals import DynamicsAdaptation
 from abr_control._vendor.nengolib.stats import ScatteredHypersphere
-import nengo_extras.triangular_intercepts
+from nengo_extras import dists
 
 def test_scaling():
     robot_config = ur5.Config(use_cython=True)
@@ -74,7 +74,7 @@ def test_intercepts_and_encoders(
         np.random.seed = seed
 
         intercepts = (
-            nengo_extras.triangular_intercepts.generate(
+            dists.generate_triangular(
                 n_input=n_input + spherical,
                 n_neurons=n_neurons,
                 n_ensembles=n_ensembles,
