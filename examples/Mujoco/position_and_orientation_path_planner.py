@@ -1,5 +1,5 @@
 """
-Running operational space control using VREP. The controller will
+Running operational space control using Mujoco. The controller will
 move the end-effector to the target object's position and orientation.
 
 This example controls all 6 degrees of freedom (position and orientation),
@@ -8,53 +8,61 @@ and applies a second order path planner to both position and orientation targets
 After termination the script will plot results
 """
 import numpy as np
+import glfw
 
-from abr_control.arms import ur5 as arm
 from abr_control.controllers import OSC, Damping, path_planners
-from abr_control.interfaces import VREP
+from abr_control.arms.mujoco_config import MujocoConfig as arm
+from abr_control.interfaces.mujoco import Mujoco
 from abr_control.utils import transformations
 
 
 # initialize our robot config
-robot_config = arm.Config()
+robot_config = arm('jaco2')
+
+# create our interface
+interface = Mujoco(robot_config, dt=.001)
+interface.connect()
+interface.send_target_angles(robot_config.START_ANGLES)
 
 # damp the movements of the arm
 damping = Damping(robot_config, kv=10)
 # create opreational space controller
 ctrlr = OSC(
     robot_config,
-    kp=100,  # position gain
-    ko=250,  # orientation gain
+    kp=30,  # position gain
+    kv=20,
+    ko=180,  # orientation gain
     null_controllers=[damping],
     vmax=None,  # [m/s, rad/s]
     # control all DOF [x, y, z, alpha, beta, gamma]
     ctrlr_dof = [True, True, True, True, True, True])
 
-# create our interface
-interface = VREP(robot_config, dt=.005)
-interface.connect()
-
-# pregenerate our path and orientation planners
-n_timesteps = 1000
-traj_planner = path_planners.SecondOrderDMP(
-    error_scale=50, n_timesteps=n_timesteps)
-orientation_planner = path_planners.Orientation()
-
 feedback = interface.get_feedback()
 hand_xyz = robot_config.Tx('EE', feedback['q'])
-starting_orientation = robot_config.quaternion('EE', feedback['q'])
 
-target_orientation = np.random.random(3)
-target_orientation /= np.linalg.norm(target_orientation)
-# convert our orientation to a quaternion
-target_orientation = [0] + list(target_orientation)
-target_position = [-0.4, -0.3, 0.6]
+def get_target(robot_config):
+    # pregenerate our path and orientation planners
+    n_timesteps = 2000
+    position_planner = path_planners.SecondOrderDMP(
+        error_scale=0.01, n_timesteps=n_timesteps)
+    orientation_path = path_planners.Orientation()
 
-traj_planner.generate_path(
-    position=hand_xyz, target_pos=target_position)
-orientation_planner.match_position_path(
-    orientation=starting_orientation, target_orientation=target_orientation,
-    position_path=traj_planner.position)
+    starting_orientation = robot_config.quaternion('EE', feedback['q'])
+
+    mag = 0.6
+    target_position = np.random.random(3)*0.5
+    target_position = target_position / np.linalg.norm(target_position) * mag
+
+    position_planner.generate_path(
+        position=hand_xyz, target_position=target_position)
+
+    target_orientation = transformations.random_quaternion()
+
+    orientation_path.match_position_path(
+            orientation=starting_orientation, target_orientation=target_orientation,
+        position_path=position_planner.position_path)
+
+    return position_planner, orientation_path, target_position, target_orientation
 
 # set up lists for tracking data
 ee_track = []
@@ -65,27 +73,37 @@ target_angles_track = []
 
 try:
     count = 0
-    interface.set_xyz('target', target_position)
-    interface.set_orientation(
-        'target', transformations.euler_from_quaternion(
-            target_orientation, axes='rxyz'))
 
     print('\nSimulation starting...\n')
     while 1:
+        if interface.viewer.exit:
+            glfw.destroy_window(interface.viewer.window)
+            break
         # get arm feedback
         feedback = interface.get_feedback()
         hand_xyz = robot_config.Tx('EE', feedback['q'])
+        if count % 3000 == 0:
+            position_planner, orientation_path, target_position, target_orientation = get_target(robot_config)
+            interface.set_mocap_xyz('target_orientation', target_position)
+            interface.set_mocap_orientation('target_orientation', target_orientation)
 
-        pos, vel = traj_planner.next()[:3]
-        orient = orientation_planner.next()
+        pos, vel = position_planner.next()
+        orient = orientation_path.next()
         target = np.hstack([pos, orient])
+
+        interface.set_mocap_xyz('path_planner_orientation', target[:3])
+        interface.set_mocap_orientation('path_planner_orientation',
+            transformations.quaternion_from_euler(
+                orient[0], orient[1], orient[2], 'rxyz'))
 
         u = ctrlr.generate(
             q=feedback['q'],
             dq=feedback['dq'],
             target=target,
-            #target_vel=np.hstack([vel, np.zeros(3)])
             )
+
+        # add gripper forces
+        u = np.hstack((u, np.ones(3)*0.05))
 
         # apply the control signal, step the sim forward
         interface.send_forces(u)
